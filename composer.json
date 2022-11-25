@@ -2,7 +2,7 @@
     "name": "vladkuch/kittyphp",
     "autoload": {
         "psr-4": {
-            "Kittyphp\\Core\\": "core/"
+            "Core\\": "core/"
         }
     },
     "authors": [
