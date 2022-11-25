@@ -4,14 +4,13 @@ namespace Core;
 
 class Kitty {
     private $di;
-    public function __construct($container = []) 
+    public function __construct(\Core\Di $container) 
     {
-        $this->di = \Core\Di::getInstance();
-        $this->di->initialize($container);
+        $this->di = $container;
     }
 
     public function run(): void
     {
-        print_r("Фреймверк запущен!");
+        print_r("Фреймверк запущен! \n ");
     }
 }

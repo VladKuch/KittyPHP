@@ -4,8 +4,9 @@ $version_lower = version_compare($current_version = phpversion(), $required = \C
 if ($version_lower) {
     exit(sprintf('<h1 style="font-family: sans-serif;font-weight: 100;">Ваша текущая версия PHP %s, но для KittyPHP минимальная версия PHP должна быть %s.</h1>', $current_version, $required));
 }
+$container = require_once 'di/di.php';
 
-$kitty = new \Core\Kitty();
+$kitty = new \Core\Kitty($container);
 
 try {
     $kitty->run();

@@ -1,2 +1,4 @@
+.vscode/
 /vendor/
-.vscode
+composer.lock
+_settings.yaml
