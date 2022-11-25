@@ -29,6 +29,10 @@ class Di
 
     public function __set($key, $value)
     {
+        if ($value instanceof \Closure) {
+            $value = $value();
+        }
+
         $this->container[$key] = $value;
     }
 
