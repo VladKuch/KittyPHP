@@ -1,0 +1,15 @@
+{
+    "name": "vladkuch/kittyphp",
+    "autoload": {
+        "psr-4": {
+            "Kittyphp\\Core\\": "core/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Vladislav Kuch",
+            "email": "vladislav.kuch@mail.ru"
+        }
+    ],
+    "require": {}
+}
