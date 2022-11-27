@@ -2,7 +2,9 @@
 
 namespace Core\Http;
 
-class Request 
+use \Psr\Http\Message\ServerRequestInterface;
+
+class Request extends Message implements ServerRequestInterface
 {
     public function __construct()
     {
