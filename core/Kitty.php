@@ -12,5 +12,7 @@ class Kitty {
     public function run(): void
     {
         print_r("Фреймверк запущен! \n ");
+
+        $this->di->router->handle($this->di->request, $this->di->uri);
     }
 }

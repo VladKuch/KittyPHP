@@ -50,5 +50,8 @@ class Di
         return isset($this->container[$key]);
     }
 
-    private function __construct() {}
+    private function __construct() {
+        $this->container['uri'] = new \Core\Http\Uri();
+        $this->container['request'] = new \Core\Http\Request();
+    }
 }
