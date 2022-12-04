@@ -4,7 +4,7 @@ namespace Core\Http\Message;
 use Psr\Http\Mesage\MesageInterface;
 use Psr\Http\Mesage\StreamInterface;
 
-abstract class Message extends MessageInterface 
+abstract class Message implements MessageInterface 
 {
     protected string $protocol_version = '1.1';
     protected array $headers;
@@ -33,7 +33,7 @@ abstract class Message extends MessageInterface
         }
 
         $clone = clone $this;
-        $clone->protocol_мersion = $version;
+        $clone->protocol_version = $version;
 
         return $clone;
     }
@@ -43,7 +43,7 @@ abstract class Message extends MessageInterface
      */
     public function getHeaders(): array
     {
-        return $this->headers->getHeaders(true);
+        return $this->headers->getHeaders();
     }
 
     /**

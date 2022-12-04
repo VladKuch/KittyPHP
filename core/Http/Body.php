@@ -1,24 +1,98 @@
 <?php
 namespace Core\Http\Body;
 
+use InvalidArgumentException;
 use Psr\Http\Message\StreamInterface;
+use RuntimeException;
 
-class Body implements StreamInterface
+class Stream implements StreamInterface
 {
     /**
-     * {@inheritdoc}
+     * Bit mask to determine if the stream is a pipe
+     *
+     * This is octal as per header stat.h
      */
-    public function __toString(): string
+    public const FSTAT_MODE_S_IFIFO = 0010000;
+
+    /**
+     * The underlying stream resource
+     *
+     * @var resource|null
+     */
+    protected $stream;
+
+    protected ?array $meta;
+
+    protected ?bool $readable = null;
+
+    protected ?bool $writable = null;
+
+    protected ?bool $seekable = null;
+
+    protected ?int $size = null;
+
+    protected ?bool $isPipe = null;
+
+    protected bool $finished = false;
+
+    protected ?StreamInterface $cache;
+
+    /**
+     * @param  resource         $stream A PHP resource handle.
+     * @param  ?StreamInterface $cache  A stream to cache $stream (useful for non-seekable streams)
+     *
+     * @throws InvalidArgumentException If argument is not a resource.
+     */
+    public function __construct($stream, ?StreamInterface $cache = null)
     {
-        return '';
+        $this->attach($stream);
+
+        if ($cache && (!$cache->isSeekable() || !$cache->isWritable())) {
+            throw new RuntimeException('Cache stream must be seekable and writable');
+        }
+        $this->cache = $cache;
     }
 
     /**
      * {@inheritdoc}
      */
-    public function close(): void
+    public function getMetadata($key = null)
     {
-    
+        if (!$this->stream) {
+            return null;
+        }
+
+        $this->meta = stream_get_meta_data($this->stream);
+
+        if (!$key) {
+            return $this->meta;
+        }
+
+        return $this->meta[$key] ?? null;
+    }
+
+    /**
+     * Attach new resource to this object.
+     *
+     * @internal This method is not part of the PSR-7 standard.
+     *
+     * @param resource $stream A PHP resource handle.
+     *
+     * @throws InvalidArgumentException If argument is not a valid PHP resource.
+     *
+     * @return void
+     */
+    protected function attach($stream): void
+    {
+        if (!is_resource($stream)) {
+            throw new InvalidArgumentException(__METHOD__ . ' argument must be a valid PHP resource');
+        }
+
+        if ($this->stream) {
+            $this->detach();
+        }
+
+        $this->stream = $stream;
     }
 
     /**
@@ -26,7 +100,53 @@ class Body implements StreamInterface
      */
     public function detach()
     {
-        return null;
+        $oldResource = $this->stream;
+        $this->stream = null;
+        $this->meta = null;
+        $this->readable = null;
+        $this->writable = null;
+        $this->seekable = null;
+        $this->size = null;
+        $this->isPipe = null;
+
+        $this->cache = null;
+        $this->finished = false;
+
+        return $oldResource;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function __toString(): string
+    {
+        if (!$this->stream) {
+            return '';
+        }
+        if ($this->cache && $this->finished) {
+            $this->cache->rewind();
+            return $this->cache->getContents();
+        }
+        if ($this->isSeekable()) {
+            $this->rewind();
+        }
+        return $this->getContents();
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function close(): void
+    {
+        if ($this->stream) {
+            if ($this->isPipe()) {
+                pclose($this->stream);
+            } else {
+                fclose($this->stream);
+            }
+        }
+
+        $this->detach();
     }
 
     /**
@@ -34,7 +154,15 @@ class Body implements StreamInterface
      */
     public function getSize(): ?int
     {
-        return null;
+        if ($this->stream && !$this->size) {
+            $stats = fstat($this->stream);
+
+            if ($stats) {
+                $this->size = !$this->isPipe() ? $stats['size'] : null;
+            }
+        }
+
+        return $this->size;
     }
 
     /**
@@ -42,7 +170,17 @@ class Body implements StreamInterface
      */
     public function tell(): int
     {
-        return 0;
+        $position = false;
+
+        if ($this->stream) {
+            $position = ftell($this->stream);
+        }
+
+        if ($position === false || $this->isPipe()) {
+            throw new RuntimeException('Could not get the position of the pointer in stream.');
+        }
+
+        return $position;
     }
 
     /**
@@ -50,56 +188,7 @@ class Body implements StreamInterface
      */
     public function eof(): bool
     {
-        return true;
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function isSeekable(): bool
-    {
-        return false;
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function seek($offset, $whence = SEEK_SET): void
-    {
-        throw new \RuntimeException('A NonBufferedBody is not seekable.');
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function rewind(): void
-    {
-        throw new \RuntimeException('A NonBufferedBody is not rewindable.');
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function isWritable(): bool
-    {
-        return true;
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    public function write($string): int
-    {
-        $buffered = '';
-        while (0 < ob_get_level()) {
-            $buffered = ob_get_clean() . $buffered;
-        }
-
-        echo $buffered . $string;
-
-        flush();
-
-        return strlen($string) + strlen($buffered);
+        return !$this->stream || feof($this->stream);
     }
 
     /**
@@ -107,7 +196,77 @@ class Body implements StreamInterface
      */
     public function isReadable(): bool
     {
-        return false;
+        if ($this->readable !== null) {
+            return $this->readable;
+        }
+
+        $this->readable = false;
+
+        if ($this->stream) {
+            $mode = $this->getMetadata('mode');
+
+            if (is_string($mode) && (strstr($mode, 'r') !== false || strstr($mode, '+') !== false)) {
+                $this->readable = true;
+            }
+        }
+
+        return $this->readable;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function isWritable(): bool
+    {
+        if ($this->writable === null) {
+            $this->writable = false;
+
+            if ($this->stream) {
+                $mode = $this->getMetadata('mode');
+
+                if (is_string($mode) && (strstr($mode, 'w') !== false || strstr($mode, '+') !== false)) {
+                    $this->writable = true;
+                }
+            }
+        }
+
+        return $this->writable;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function isSeekable(): bool
+    {
+        if ($this->seekable === null) {
+            $this->seekable = false;
+
+            if ($this->stream) {
+                $this->seekable = !$this->isPipe() && $this->getMetadata('seekable');
+            }
+        }
+
+        return $this->seekable;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function seek($offset, $whence = SEEK_SET): void
+    {
+        if (!$this->isSeekable() || $this->stream && fseek($this->stream, $offset, $whence) === -1) {
+            throw new RuntimeException('Could not seek in stream.');
+        }
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function rewind(): void
+    {
+        if (!$this->isSeekable() || $this->stream && rewind($this->stream) === false) {
+            throw new RuntimeException('Could not rewind stream.');
+        }
     }
 
     /**
@@ -115,7 +274,42 @@ class Body implements StreamInterface
      */
     public function read($length): string
     {
-        throw new RuntimeException('A NonBufferedBody is not readable.');
+        $data = false;
+
+        if ($this->isReadable() && $this->stream && $length >= 0) {
+            $data = fread($this->stream, $length);
+        }
+
+        if (is_string($data)) {
+            if ($this->cache) {
+                $this->cache->write($data);
+            }
+            if ($this->eof()) {
+                $this->finished = true;
+            }
+            return $data;
+        }
+
+        throw new RuntimeException('Could not read from stream.');
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function write($string)
+    {
+        $written = false;
+
+        if ($this->isWritable() && $this->stream) {
+            $written = fwrite($this->stream, $string);
+        }
+
+        if ($written !== false) {
+            $this->size = null;
+            return $written;
+        }
+
+        throw new RuntimeException('Could not write to stream.');
     }
 
     /**
@@ -123,14 +317,51 @@ class Body implements StreamInterface
      */
     public function getContents(): string
     {
-        return '';
+        if ($this->cache && $this->finished) {
+            $this->cache->rewind();
+            return $this->cache->getContents();
+        }
+
+        $contents = false;
+
+        if ($this->stream) {
+            $contents = stream_get_contents($this->stream);
+        }
+
+        if (is_string($contents)) {
+            if ($this->cache) {
+                $this->cache->write($contents);
+            }
+            if ($this->eof()) {
+                $this->finished = true;
+            }
+            return $contents;
+        }
+
+        throw new RuntimeException('Could not get contents of stream.');
     }
 
     /**
-     * {@inheritdoc}
+     * Returns whether or not the stream is a pipe.
+     *
+     * @internal This method is not part of the PSR-7 standard.
+     *
+     * @return bool
      */
-    public function getMetadata($key = null): ?array
+    public function isPipe(): bool
     {
-        return null;
+        if ($this->isPipe === null) {
+            $this->isPipe = false;
+
+            if ($this->stream) {
+                $stats = fstat($this->stream);
+
+                if (is_array($stats)) {
+                    $this->isPipe = ($stats['mode'] & self::FSTAT_MODE_S_IFIFO) !== 0;
+                }
+            }
+        }
+
+        return $this->isPipe;
     }
 }
